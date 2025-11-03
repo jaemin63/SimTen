@@ -1,79 +1,553 @@
 PROGRAM IPL_DN_SimTen_If
-%COMMENT = 'Parse&Read CNC Signal'
 %NOLOCKGROUP
-%NOPAUSE = ERROR + COMMAND + TPENABLE 
-%NOABORT = ERROR + COMMAND 
+%CMOSVARS
+%COMMENT = '!!!Parsing Prg - condition parser -> R[50]'
+%STACKSIZE=600
+
+CONST
+  NROWS = 10
+  INPUT_STR_MAX = 254
+  MAXTOK = 100
+  MAX_TOKLEN = 32
+  RNUM = 10
+
+  T_LPAREN = 1
+  T_RPAREN = 2
+  T_AND    = 3
+  T_OR     = 4
+  T_NOT    = 5
+  T_OPER   = 6
 
 VAR
-  SELSIG IN CMOS FROM IPL_DN_SmplGrp_Cfg2 : INTEGER
-  OPENDO IN CMOS FROM IPL_DN_SmplGrp_Cfg2 : INTEGER
-  CLOSDO IN CMOS FROM IPL_DN_SmplGrp_Cfg2 : INTEGER
-  STATDI IN CMOS FROM IPL_DN_SmplGrp_Cfg2 : INTEGER
-
-  arg1 : INTEGER    -- List Select Param
-  arg2 : REAL       -- Param1
-  arg3 : INTEGER    -- Param2
-  arg4 : INTEGER    -- Connection Interface Type
-  arg5 : STRING[35] -- Alarm Text
-  
-  num : INTEGER
   data_type : INTEGER
-  int_value : INTEGER
-  real_value : REAL
-  str_value : STRING[35]
-  ri_value : INTEGER
-  status : INTEGER
+  dummy_int : INTEGER
+  dummy_real: REAL
+  cond_str  : STRING[INPUT_STR_MAX]
+  status    : INTEGER
+  result    : INTEGER
 
-ROUTINE IPL_ERPOST( PluginID: STRING;
-                    AlarmNumber: INTEGER;
-                    Cause_code: INTEGER;
-                    Param: STRING;
-                    Format: INTEGER) FROM IPL_FANUC_sys_erpost
-  
+  -- tokenizer storage
+  tok_count : INTEGER
+  tok_type  : ARRAY[MAXTOK] OF INTEGER
+  tok_text  : ARRAY[MAXTOK] OF STRING[MAX_TOKLEN]
+
+  -- postfix storage
+  rpn_count : INTEGER
+  rpn_type  : ARRAY[MAXTOK] OF INTEGER
+  rpn_text  : ARRAY[MAXTOK] OF STRING[MAX_TOKLEN]
+
+  -- evaluation stack
+  eval_stack: ARRAY[MAXTOK] OF INTEGER
+  eval_sp   : INTEGER
+
+  -- CMOS mapping (assumed present in environment)
+  DI_NAME FROM IPL_DN_SimTen_Cfg   : ARRAY[NROWS] OF STRING[MAX_TOKLEN]
+  DI_OFFSET FROM IPL_DN_SimTen_Cfg : ARRAY[NROWS] OF INTEGER
+
+-- ------------------------------------------------------------------
+-- Utility: trim leading/trailing spaces
+-- out = trimmed version of s
+ROUTINE STR_TRIM(s: STRING; out: STRING)
+  VAR i, L, start_i, end_i, c : INTEGER
+      tmp: STRING[MAX_TOKLEN]
 BEGIN
+  out = ''
+  L = STR_LEN(s)
+  start_i = 1
+  end_i = L
 
-  -- Get Arguments 1 to 5
-  GET_TPE_PRM(1, data_type, arg1,      real_value, str_value, status)
-  GET_TPE_PRM(2, data_type, int_value, arg2,       str_value, status)
-  GET_TPE_PRM(3, data_type, arg3,      real_value, str_value, status)
-  GET_TPE_PRM(4, data_type, arg4,      real_value, str_value, status)
-  GET_TPE_PRM(5, data_type, int_value, real_value, arg5,      status)
+  -- 찾기: 문자열 앞 공백/탭/줄바꿈 건너뛰기
+  WHILE start_i <= L DO
+    c = ORD(s, start_i)
+    IF (c <> 32) AND (c <> 9) AND (c <> 13) AND (c <> 10) THEN
+      GOTO done_start
+    ENDIF
+    start_i = start_i + 1
+  ENDWHILE
+DONE_START::
 
-  -- Check Connection Interface
-  IF (arg4 = 0) THEN
-    -- Interface is not selected
-    IPL_ERPOST('FANUC_SmplGrp', 1, 0, arg5, 0)
-  ELSE
-  
-    IF (arg4 = 1) THEN
-      -- Use DO Signal
-      -- Check Gripper Status
-      IF (DIN[STATDI] = OFF) THEN
-        -- Close Hand
-        DOUT[OPENDO] = OFF
-        DOUT[CLOSDO] = ON
-      ELSE -- When DIN[STATDI] = ON
-        -- Status error
-        -- Convert INTEGER to STRING
-        CNV_INT_STR(STATDI, 1, 0, str_value)
-        IPL_ERPOST('FANUC_SmplGrp', 2, 0, str_value, 0)
+  -- 찾기: 문자열 뒤 공백/탭/줄바꿈 건너뛰기
+  WHILE end_i >= start_i DO
+    c = ORD(s, end_i)
+    IF (c <> 32) AND (c <> 9) AND (c <> 13) AND (c <> 10) THEN
+      GOTO done_end
+    ENDIF
+    end_i = end_i - 1
+  ENDWHILE
+DONE_END::
+
+  -- 문자열이 전부 공백일 경우
+  IF end_i < start_i THEN
+    out = ''
+    RETURN
+  ENDIF
+
+  -- 실제 문자열 복사
+  tmp = ''
+  i = start_i
+  WHILE i <= end_i DO
+    tmp = tmp + CHR(ORD(s, i))
+    i = i + 1
+  ENDWHILE
+
+  out = tmp
+END STR_TRIM
+
+
+-- ------------------------------------------------------------------
+-- Map operand name -> index in DI_NAME (linear search)
+-- returns idx (1..NROWS) and err (0=ok,1=not found)
+ROUTINE MAP_OPERAND_TO_INDEX(name: STRING; idx: INTEGER; err: INTEGER)
+  VAR i: INTEGER; cmpName: STRING[MAX_TOKLEN]; a: STRING[MAX_TOKLEN]
+BEGIN
+  err = 1
+  idx = 0
+  -- trim name for safety
+  STR_TRIM(name, a)
+  FOR i = 1 TO NROWS DO
+    IF STR_LEN(DI_NAME[i]) = 0 THEN
+      -- empty slot, skip
+    ELSE
+      STR_TRIM(DI_NAME[i], cmpName)
+      IF cmpName = a THEN
+        idx = i
+        err = 0
+        RETURN
       ENDIF
-      
-    ELSE -- arg4 = 2
-      -- Use RO Signal
-      -- Check Gripper Status
-      GET_PORT_VAL(8, 1, ri_value, status)
-      IF (status = 0) THEN
-        IF (ri_value = 0) THEN -- When RI[1] = OFF
-          SET_PORT_VAL(9, 1, 0, status) -- RO[1] = OFF
-          SET_PORT_VAL(9, 2, 1, status) -- RO[2] = ON
-        ELSE -- When RI[1] = ON
-          -- Status error
-          IPL_ERPOST('FANUC_SmplGrp', 3, 0, '', 0)
+    ENDIF
+  ENDFOR
+END MAP_OPERAND_TO_INDEX
+
+-- ------------------------------------------------------------------
+-- Read DI value by DI_OFFSET index; returns 0/1 in val
+-- Uses DIN[...] as agreed
+ROUTINE READ_DI_BY_INDEX(idx: INTEGER; val: INTEGER)
+  VAR bitAddr: INTEGER
+BEGIN
+  val = 0
+  IF (idx < 1) OR (idx > NROWS) THEN
+    RETURN
+  ENDIF
+  bitAddr = DI_OFFSET[idx]
+  -- IF DIN[bitAddr] = ON THEN
+  IF DOUT[bitAddr] = ON THEN
+  	val = 1
+  ELSE
+  	val = 0
+  ENDIF
+END READ_DI_BY_INDEX
+
+-- ------------------------------------------------------------------
+-- TOKENIZER (WHILE-style, no CONTINUE)
+-- tokens: '(' , ')' , AND, OR, NOT, OPERAND (assumed uppercase)
+ROUTINE TOKENIZE(INPUT: STRING; err_msg: STRING)
+  VAR 
+  i : INTEGER
+  L : INTEGER
+  cval : INTEGER
+  wordlen : INTEGER
+  j : INTEGER
+  tokAdded: INTEGER
+  ch : INTEGER
+  word : STRING[MAX_TOKLEN]
+  tmp  : STRING[MAX_TOKLEN]
+BEGIN
+  err_msg = ''
+  tok_count = 0
+  L = STR_LEN(INPUT)
+  i = 1
+  WHILE i <= L DO
+    cval = ORD(INPUT, i)
+    -- whitespace?
+    IF (cval = 32) OR (cval = 9) OR (cval = 10) OR (cval = 13) THEN
+      i = i + 1
+    ELSE
+      -- '(' ?
+      IF cval = 40 THEN
+        tok_count = tok_count + 1
+        IF tok_count > MAXTOK THEN
+          err_msg = 'ERROR: token count exceeds MAXTOK'; RETURN; ENDIF
+        tok_type[tok_count] = T_LPAREN
+        tok_text[tok_count] = '('
+        i = i + 1
+      ELSE
+        -- ')' ?
+        IF cval = 41 THEN
+          tok_count = tok_count + 1
+          IF tok_count > MAXTOK THEN
+            err_msg = 'ERROR: token count exceeds MAXTOK'; RETURN; ENDIF
+          tok_type[tok_count] = T_RPAREN
+          tok_text[tok_count] = ')'
+          i = i + 1
+        ELSE
+          -- build a word until whitespace or paren
+          word = ''
+          wordlen = 0
+          WHILE i <= L DO
+            cval = ORD(INPUT, i)
+            IF (cval = 32) OR (cval = 9) OR (cval = 10) OR (cval = 13) OR (cval = 40) OR (cval = 41) THEN
+              GO TO while_end
+            ENDIF
+            wordlen = wordlen + 1
+            IF wordlen <= MAX_TOKLEN THEN
+              word = word + CHR(cval)
+            ENDIF
+            i = i + 1
+          ENDWHILE
+WHILE_END::
+          STR_TRIM(word, tmp)
+          IF STR_LEN(tmp) > 0 THEN
+            -- check operators
+            IF tmp = 'AND' THEN
+              tok_count = tok_count + 1
+              IF tok_count > MAXTOK THEN err_msg='ERROR: token count exceeds MAXTOK'; RETURN; ENDIF
+              tok_type[tok_count] = T_AND
+              tok_text[tok_count] = 'AND'
+            ELSE
+              IF tmp = 'OR' THEN
+                tok_count = tok_count + 1
+                IF tok_count > MAXTOK THEN err_msg='ERROR: token count exceeds MAXTOK'; RETURN; ENDIF
+                tok_type[tok_count] = T_OR
+                tok_text[tok_count] = 'OR'
+              ELSE
+                IF tmp = 'NOT' THEN
+                  tok_count = tok_count + 1
+                  IF tok_count > MAXTOK THEN err_msg='ERROR: token count exceeds MAXTOK'; RETURN; ENDIF
+                  tok_type[tok_count] = T_NOT
+                  tok_text[tok_count] = 'NOT'
+                ELSE
+                  tok_count = tok_count + 1
+                  IF tok_count > MAXTOK THEN err_msg='ERROR: token count exceeds MAXTOK'; RETURN; ENDIF
+                  tok_type[tok_count] = T_OPER
+                  tok_text[tok_count] = tmp
+                ENDIF
+              ENDIF
+            ENDIF
+          ENDIF
+
         ENDIF
       ENDIF
     ENDIF
-    
+
+  ENDWHILE
+END TOKENIZE
+
+-- ------------------------------------------------------------------
+-- SYNTAX VALIDATION (checks the error cases you requested)
+-- SYNTAX VALIDATION (checks the error cases you requested)
+ROUTINE CHECK_SYNTAX(err_msg: STRING)
+  VAR i, bal, t, prev_type, cnt_operands: INTEGER
+BEGIN
+  err_msg = ''
+  IF tok_count = 0 THEN
+    err_msg = 'ERROR: empty expression'
+    RETURN
   ENDIF
 
+  bal = 0
+  prev_type = 0
+  cnt_operands = 0
+
+  FOR i = 1 TO tok_count DO
+    t = tok_type[i]
+
+    IF t = T_LPAREN THEN
+      bal = bal + 1
+      IF prev_type = 1 THEN
+        err_msg = 'ERROR: missing operator before "(" at token '
+        RETURN
+      ENDIF
+      prev_type = 2
+    ELSE
+      IF t = T_RPAREN THEN
+        bal = bal - 1
+        IF bal < 0 THEN
+          err_msg = 'ERROR: closing parenthesis before matching "("'
+          RETURN
+        ENDIF
+        IF prev_type <> 1 THEN
+          err_msg = 'ERROR: missing operand before ")" at token '
+          RETURN
+        ENDIF
+        prev_type = 1
+      ELSE
+        IF t = T_OPER THEN
+          IF prev_type = 1 THEN
+            err_msg = 'ERROR: missing operator between operands at token '
+            RETURN
+          ENDIF
+          prev_type = 1
+          cnt_operands = cnt_operands + 1
+        ELSE
+          IF t = T_NOT THEN
+            IF prev_type = 1 THEN
+              err_msg = 'ERROR: missing operator before NOT at token '
+              RETURN
+            ENDIF
+            prev_type = 2
+          ELSE
+            -- AND/OR
+            IF i = 1 THEN
+              err_msg = 'ERROR: expression starts with operator at token '
+              RETURN
+            ENDIF
+            IF prev_type <> 1 THEN
+              err_msg = 'ERROR: operator without left operand at token '
+              RETURN
+            ENDIF
+            IF i = tok_count THEN
+              err_msg = 'ERROR: expression ends with operator at token '
+              RETURN
+            ENDIF
+            prev_type = 2
+          ENDIF
+        ENDIF
+      ENDIF
+    ENDIF
+
+  ENDFOR
+
+  IF bal <> 0 THEN
+    err_msg = 'ERROR: mismatched parentheses (balance)'
+    RETURN
+  ENDIF
+
+  IF prev_type <> 1 THEN
+    err_msg = 'ERROR: expression ends unexpectedly (missing operand)'
+    RETURN
+  ENDIF
+
+  IF cnt_operands < 1 THEN
+    err_msg = 'ERROR: no operands found'
+    RETURN
+  ENDIF
+END CHECK_SYNTAX
+
+
+-- ------------------------------------------------------------------
+-- operator precedence
+ROUTINE PREC(t: INTEGER; p: INTEGER)
+BEGIN
+  IF t = T_NOT THEN p = 3
+  ELSE
+  	IF t = T_AND THEN p = 2
+  	ELSE
+  		IF t = T_OR THEN p = 1
+  		ELSE
+  			p = 0
+  		ENDIF
+  	ENDIF
+  ENDIF
+END PREC
+
+-- ------------------------------------------------------------------
+-- INFIX -> POSTFIX (Shunting Yard)
+ROUTINE INFIX_TO_POSTFIX(err_msg: STRING)
+  VAR op_stack_type: ARRAY[MAXTOK] OF INTEGER
+      op_stack_text: ARRAY[MAXTOK] OF STRING[MAX_TOKLEN]
+      op_sp, i, curt, prec_cur, prec_top: INTEGER
+BEGIN
+  err_msg = ''
+  rpn_count = 0
+  op_sp = 0
+
+  FOR i = 1 TO tok_count DO
+    curt = tok_type[i]
+
+    IF curt = T_OPER THEN
+      rpn_count = rpn_count + 1
+      rpn_type[rpn_count] = T_OPER
+      rpn_text[rpn_count] = tok_text[i]
+
+    ELSE
+      IF curt = T_NOT THEN
+        op_sp = op_sp + 1
+        op_stack_type[op_sp] = T_NOT
+        op_stack_text[op_sp] = 'NOT'
+
+      ELSE
+        IF (curt = T_AND) OR (curt = T_OR) THEN
+          PREC(curt, prec_cur)
+          WHILE op_sp > 0 DO
+            PREC(op_stack_type[op_sp], prec_top)
+            IF prec_top < prec_cur THEN
+              GO TO L1
+            ENDIF
+            rpn_count = rpn_count + 1
+            rpn_type[rpn_count] = op_stack_type[op_sp]
+            rpn_text[rpn_count] = op_stack_text[op_sp]
+            op_sp = op_sp - 1
+          ENDWHILE
+         L1:: 
+         
+          op_sp = op_sp + 1
+          op_stack_type[op_sp] = curt
+          IF curt = T_AND THEN
+            op_stack_text[op_sp] = 'AND'
+          ELSE
+            op_stack_text[op_sp] = 'OR'
+          ENDIF
+
+        ELSE
+          IF curt = T_LPAREN THEN
+            op_sp = op_sp + 1
+            op_stack_type[op_sp] = T_LPAREN
+            op_stack_text[op_sp] = '('
+
+          ELSE
+            IF curt = T_RPAREN THEN
+              WHILE (op_sp > 0) AND (op_stack_type[op_sp] <> T_LPAREN) DO
+                rpn_count = rpn_count + 1
+                rpn_type[rpn_count] = op_stack_type[op_sp]
+                rpn_text[rpn_count] = op_stack_text[op_sp]
+                op_sp = op_sp - 1
+              ENDWHILE
+              IF op_sp = 0 THEN
+                err_msg = 'ERROR: mismatched parentheses during conversion'; RETURN; ENDIF
+              ENDIF
+              op_sp = op_sp - 1  -- pop '('
+            ENDIF
+          ENDIF
+
+        ENDIF
+      ENDIF
+
+  ENDFOR
+
+  WHILE op_sp > 0 DO
+    IF op_stack_type[op_sp] = T_LPAREN THEN
+      err_msg = 'ERROR: mismatched parentheses at final pop'; RETURN; ENDIF
+    rpn_count = rpn_count + 1
+    rpn_type[rpn_count] = op_stack_type[op_sp]
+    rpn_text[rpn_count] = op_stack_text[op_sp]
+    op_sp = op_sp - 1
+  ENDWHILE
+
+END INFIX_TO_POSTFIX
+
+
+-- ------------------------------------------------------------------
+-- Evaluate RPN (postfix). Uses MAP_OPERAND_TO_INDEX + READ_DI_BY_INDEX
+ROUTINE EVALUATE_RPN(err_msg: STRING)
+  VAR i, t, idx, val, a, b, err_tmp: INTEGER
+BEGIN
+  err_msg = ''
+  eval_sp = 0
+
+  FOR i = 1 TO rpn_count DO
+    t = rpn_type[i]
+
+    IF t = T_OPER THEN
+      MAP_OPERAND_TO_INDEX(rpn_text[i], idx, err_tmp)
+      IF err_tmp = 1 THEN
+        err_msg = 'ERROR: operand "' + rpn_text[i] + '" not found'; RETURN; ENDIF
+      READ_DI_BY_INDEX(idx, val)
+      eval_sp = eval_sp + 1
+      eval_stack[eval_sp] = val
+
+    ELSE
+      IF t = T_NOT THEN
+        IF eval_sp < 1 THEN err_msg = 'ERROR: NOT lacks operand'; RETURN; ENDIF
+        a = eval_stack[eval_sp]
+        eval_stack[eval_sp] = 1 - (a AND 1)
+
+      ELSE
+        IF t = T_AND THEN
+          IF eval_sp < 2 THEN err_msg = 'ERROR: AND lacks operands'; RETURN; ENDIF
+          b = eval_stack[eval_sp]; eval_sp = eval_sp - 1
+          a = eval_stack[eval_sp]
+          eval_stack[eval_sp] = (a AND 1) AND (b AND 1)
+
+        ELSE
+          IF t = T_OR THEN
+            IF eval_sp < 2 THEN err_msg = 'ERROR: OR lacks operands'; RETURN; ENDIF
+            b = eval_stack[eval_sp]; eval_sp = eval_sp - 1
+            a = eval_stack[eval_sp]
+            eval_stack[eval_sp] = (a AND 1) OR (b AND 1)
+
+          ELSE
+            err_msg = 'ERROR: unknown RPN token type'; RETURN; ENDIF
+          ENDIF
+        ENDIF
+      ENDIF
+
+  ENDFOR
+
+  IF eval_sp <> 1 THEN
+    err_msg = 'ERROR: RPN evaluation ended with stack size '; RETURN
+    ENDIF
+
+  result = eval_stack[eval_sp]
+END EVALUATE_RPN
+
+
+-- ------------------------------------------------------------------
+-- High level routine: parse and evaluate
+ROUTINE Parse_And_Eval(expr: STRING; res: INTEGER)
+  VAR err: STRING[100]
+BEGIN
+  err = ''
+  TOKENIZE(expr, err)
+  IF err <> '' THEN
+    WRITE(err)
+    res = 0
+    RETURN
+  ENDIF
+  
+  WRITE(CR, 'TOKENIZE END')
+
+  CHECK_SYNTAX(err)
+  IF err <> '' THEN
+    WRITE(err)
+    res = 0
+    RETURN
+  ENDIF
+  
+  WRITE(CR, 'CHECK_SYNTAX END')
+
+  INFIX_TO_POSTFIX(err)
+  IF err <> '' THEN
+    WRITE(err)
+    res = 0
+    RETURN
+  ENDIF
+  
+  WRITE(CR, 'INFIX_TO_POSTFIX END')
+
+  EVALUATE_RPN(err)
+  IF err <> '' THEN
+    WRITE(err)
+    res = 0
+    RETURN
+  ENDIF
+  
+  WRITE(CR, 'EVALUATE_RPN END')
+
+  res = result
+END Parse_And_Eval
+
+-- ------------------------------------------------------------------
+-- MAIN
+BEGIN
+  -- Example: if your environment already preloads DI_NAME/DI_OFFSET from CMOS, skip this init.
+  -- For test/demo purposes you can set a few entries here:
+  -- DI_NAME[1] = 'DOOR' ; DI_OFFSET[1] = 10003
+  -- DI_NAME[2] = 'CALL' ; DI_OFFSET[2] = 10010
+  -- DI_NAME[3] = 'PIN'  ; DI_OFFSET[3] = 10020
+
+  GET_TPE_PRM(1, data_type, dummy_int, dummy_real, cond_str, status)
+
+ -- IF data_type <> 3 THEN
+  --  result = 0
+  --  WRITE('ERROR: parameter is not a string')
+  --  SET_INT_REG(RNUM, result, status)
+  --  RETURN
+ -- ENDIF
+  
+  cond_str = '(DOOR AND (NOT CALL))OR(NOT PIN)'
+  WRITE(CR, cond_str, CR)
+
+  Parse_And_Eval(cond_str, result)
+
+  SET_INT_REG(RNUM, result, status)
 END IPL_DN_SimTen_If
