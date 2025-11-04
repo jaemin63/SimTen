@@ -44,6 +44,9 @@ function calculateOffset(startAddr, addr, bit) {
 
 function updateOffset(prefix, index) {
   // Update offset for DI or DO
+  // Logic: Final Offset = Start DI/DO Address + ((Address - Start CNC Address) * 8 + Bit)
+  // Example: Start DI Address=100, Start CNC Address=1000, Address=1001, Bit=0
+  //          => Final Offset = 100 + ((1001-1000)*8 + 0) = 100 + 8 = 108
   const startEl = document.getElementById(prefix + "_START");
   const baseEl = document.getElementById(prefix + "_BASE");
   const addrEl = document.getElementById(prefix + "_ADDR_" + index);
@@ -52,15 +55,22 @@ function updateOffset(prefix, index) {
 
   if (!startEl || !baseEl || !addrEl || !bitEl || !offsetEl) return;
 
-  const offset = calculateOffset(startEl.value, addrEl.value, bitEl.value);
-  const baseAddress = parseInt(baseEl.value) || 0;
+  const startCncAddr = parseInt(startEl.value, 10) || 0;
+  const baseAddr = parseInt(baseEl.value, 10) || 0;
+  const addr = parseInt(addrEl.value, 10) || 0;
+  const bit = parseInt(bitEl.value, 10) || 0;
 
-  // Display as "DI[base+offset]" or "DO[base+offset]"
-  const displayValue = prefix + "[" + (baseAddress + offset) + "]";
-  offsetEl.value = displayValue;
+  // Calculate offset from Start CNC Address
+  const bitOffset = (addr - startCncAddr) * 8 + bit;
+
+  // Final offset = Start DI/DO Address + bit offset
+  const finalOffset = baseAddr + bitOffset;
+
+  // Display as number only (e.g., "108")
+  offsetEl.value = finalOffset;
 
   // Write offset to KAREL
-  ihmiSet(prefix + "_OFFSET[" + index + "]", offset);
+  ihmiSet(prefix + "_OFFSET[" + index + "]", finalOffset);
 }
 
 function bindVariable(domId, kvar) {
