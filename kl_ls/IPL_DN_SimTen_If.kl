@@ -1,13 +1,11 @@
 PROGRAM IPL_DN_SimTen_If
-%NOLOCKGROUP
-%CMOSVARS
-%COMMENT = '!!!Parsing Prg - condition parser -> R[50]'
-%STACKSIZE=600
+--%COMMENT = '!!Parsing Prg - condition parser -> R[50]'
+--%STACKSIZE = 5000
 
 CONST
   NROWS = 10
-  INPUT_STR_MAX = 254
-  MAXTOK = 100
+  INPUT_STR_MAX = 200
+  MAXTOK = 50
   MAX_TOKLEN = 32
   RNUM = 10
 
@@ -22,7 +20,7 @@ VAR
   data_type : INTEGER
   dummy_int : INTEGER
   dummy_real: REAL
-  cond_str  : STRING[INPUT_STR_MAX]
+  arg_str  : STRING[200]
   status    : INTEGER
   result    : INTEGER
 
@@ -41,8 +39,8 @@ VAR
   eval_sp   : INTEGER
 
   -- CMOS mapping (assumed present in environment)
-  DI_NAME FROM IPL_DN_SimTen_Cfg   : ARRAY[NROWS] OF STRING[MAX_TOKLEN]
-  DI_OFFSET FROM IPL_DN_SimTen_Cfg : ARRAY[NROWS] OF INTEGER
+  DI_NAME IN CMOS FROM IPL_DN_SimTen_Cfg : ARRAY[NROWS] OF STRING[MAX_TOKLEN]
+  DI_OFFSET IN CMOS FROM IPL_DN_SimTen_Cfg : ARRAY[NROWS] OF INTEGER
 
 -- ------------------------------------------------------------------
 -- Utility: trim leading/trailing spaces
@@ -535,19 +533,22 @@ BEGIN
   -- DI_NAME[2] = 'CALL' ; DI_OFFSET[2] = 10010
   -- DI_NAME[3] = 'PIN'  ; DI_OFFSET[3] = 10020
 
-  GET_TPE_PRM(1, data_type, dummy_int, dummy_real, cond_str, status)
+  GET_TPE_PRM(1, data_type, dummy_int, dummy_real, arg_str, status)
+    IF status <> 0 THEN
+    arg_str = '(DOOR AND NOT CALL)OR(NOT PIN)AND DOOR'
+GO TO LB2
+  ENDIF
 
- -- IF data_type <> 3 THEN
-  --  result = 0
-  --  WRITE('ERROR: parameter is not a string')
-  --  SET_INT_REG(RNUM, result, status)
-  --  RETURN
- -- ENDIF
+  IF data_type <> 3 THEN
+    result = 0
+    WRITE('ERROR: parameter is not a string')
+    SET_INT_REG(RNUM, result, status)
+    RETURN
+  ENDIF
   
-  cond_str = '(DOOR AND (NOT CALL))OR(NOT PIN)'
-  WRITE(CR, cond_str, CR)
-
-  Parse_And_Eval(cond_str, result)
+LB2::
+  WRITE(CR, CR, arg_str)
+  Parse_And_Eval(arg_str, result)
 
   SET_INT_REG(RNUM, result, status)
 END IPL_DN_SimTen_If
