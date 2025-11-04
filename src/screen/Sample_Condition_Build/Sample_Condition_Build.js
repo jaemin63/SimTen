@@ -403,11 +403,70 @@ function loadSignalNames() {
 // 드래그 이벤트 설정
 // ========================================
 function setupDragEvents(element) {
+  // PC용 드래그
   element.addEventListener("dragstart", function (e) {
     e.dataTransfer.effectAllowed = "copy";
     e.dataTransfer.setData("text/plain", element.getAttribute("data-value"));
     e.dataTransfer.setData("item-type", element.getAttribute("data-type"));
   });
+
+  // 태블릿용 터치 드래그
+  element.addEventListener("touchstart", function (e) {
+    const touch = e.touches[0];
+    element.classList.add("dragging");
+    element.dataset.startX = touch.clientX;
+    element.dataset.startY = touch.clientY;
+  });
+
+  element.addEventListener("touchmove", function (e) {
+    const touch = e.touches[0];
+    const deltaX = touch.clientX - parseFloat(element.dataset.startX);
+    const deltaY = touch.clientY - parseFloat(element.dataset.startY);
+    element.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+  });
+
+  element.addEventListener("touchend", function (e) {
+    element.classList.remove("dragging");
+    element.style.transform = "";
+
+    const touch = e.changedTouches[0];
+    const dropZone = document.getElementById("conditionZone");
+    const rect = dropZone.getBoundingClientRect();
+
+    if (
+      touch.clientX >= rect.left &&
+      touch.clientX <= rect.right &&
+      touch.clientY >= rect.top &&
+      touch.clientY <= rect.bottom
+    ) {
+      const dropIndex = getDropTargetIndex(dropZone, touch.clientX);
+      const value = element.getAttribute("data-value");
+      const type = element.getAttribute("data-type") || "operator";
+
+      const newItem = { text: value, type: type };
+      if (dropIndex === -1 || dropIndex >= conditionItems.length) {
+        conditionItems.push(newItem);
+      } else {
+        conditionItems.splice(dropIndex, 0, newItem);
+      }
+      updateConditionZone();
+    }
+  });
+}
+
+function getDropTargetIndex(container, x) {
+  const draggableElements = Array.from(container.querySelectorAll(".condition-item:not(.dragging)"));
+  let closest = { offset: Number.NEGATIVE_INFINITY, index: -1 };
+
+  draggableElements.forEach((child, i) => {
+    const box = child.getBoundingClientRect();
+    const offset = x - box.left - box.width / 2;
+    if (offset < 0 && offset > closest.offset) {
+      closest = { offset: offset, index: parseInt(child.getAttribute("data-index")) };
+    }
+  });
+
+  return closest.index;
 }
 
 // ========================================
