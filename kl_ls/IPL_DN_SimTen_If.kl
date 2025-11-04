@@ -1,6 +1,9 @@
 PROGRAM IPL_DN_SimTen_If
---%COMMENT = '!!Parsing Prg - condition parser -> R[50]'
---%STACKSIZE = 5000
+%COMMENT = '!!Parsing Prg - condition parser -> R[50]'
+%NOLOCKGROUP
+%NOPAUSE  = ERROR + COMMAND + TPENABLE
+%NOABORT  = ERROR + COMMAND
+%STACKSIZE = 5000
 
 CONST
   NROWS = 10
@@ -15,6 +18,9 @@ CONST
   T_OR     = 4
   T_NOT    = 5
   T_OPER   = 6
+  
+  SRC_DI = 1
+  SRC_DO = 2
 
 VAR
   data_type : INTEGER
@@ -38,9 +44,15 @@ VAR
   eval_stack: ARRAY[MAXTOK] OF INTEGER
   eval_sp   : INTEGER
 
+  op_stack_type: ARRAY[MAXTOK] OF INTEGER
+  op_stack_text: ARRAY[MAXTOK] OF STRING[MAX_TOKLEN]
+
   -- CMOS mapping (assumed present in environment)
   DI_NAME IN CMOS FROM IPL_DN_SimTen_Cfg : ARRAY[NROWS] OF STRING[MAX_TOKLEN]
   DI_OFFSET IN CMOS FROM IPL_DN_SimTen_Cfg : ARRAY[NROWS] OF INTEGER
+
+  DO_NAME IN CMOS FROM IPL_DN_SimTen_Cfg : ARRAY[NROWS] OF STRING[MAX_TOKLEN]
+  DO_OFFSET IN CMOS FROM IPL_DN_SimTen_Cfg : ARRAY[NROWS] OF INTEGER
 
 -- ------------------------------------------------------------------
 -- Utility: trim leading/trailing spaces
@@ -93,47 +105,72 @@ END STR_TRIM
 
 
 -- ------------------------------------------------------------------
--- Map operand name -> index in DI_NAME (linear search)
--- returns idx (1..NROWS) and err (0=ok,1=not found)
-ROUTINE MAP_OPERAND_TO_INDEX(name: STRING; idx: INTEGER; err: INTEGER)
-  VAR i: INTEGER; cmpName: STRING[MAX_TOKLEN]; a: STRING[MAX_TOKLEN]
+-- DI(DO)_NAME => (SRC, IDX)  MAPPING
+-- src: SRC_DI or SRC_DO
+ROUTINE MAP_OPERAND_TO_SRC_AND_INDEX(name: STRING; src: INTEGER; idx: INTEGER; err: INTEGER)
+  VAR i: INTEGER; a, b: STRING[MAX_TOKLEN]
 BEGIN
   err = 1
+  src = 0
   idx = 0
-  -- trim name for safety
+
   STR_TRIM(name, a)
+
+  -- 1) Search DI_NAME
   FOR i = 1 TO NROWS DO
-    IF STR_LEN(DI_NAME[i]) = 0 THEN
-      -- empty slot, skip
-    ELSE
-      STR_TRIM(DI_NAME[i], cmpName)
-      IF cmpName = a THEN
+    IF STR_LEN(DI_NAME[i]) > 0 THEN
+      STR_TRIM(DI_NAME[i], b)
+      IF b = a THEN
+        src = SRC_DI
         idx = i
         err = 0
         RETURN
       ENDIF
     ENDIF
   ENDFOR
-END MAP_OPERAND_TO_INDEX
 
--- ------------------------------------------------------------------
--- Read DI value by DI_OFFSET index; returns 0/1 in val
--- Uses DIN[...] as agreed
-ROUTINE READ_DI_BY_INDEX(idx: INTEGER; val: INTEGER)
+  -- 2) Search DO_NAME
+  FOR i = 1 TO NROWS DO
+    IF STR_LEN(DO_NAME[i]) > 0 THEN
+      STR_TRIM(DO_NAME[i], b)
+      IF b = a THEN
+        src = SRC_DO
+        idx = i
+        err = 0
+        RETURN
+      ENDIF
+    ENDIF
+  ENDFOR
+END MAP_OPERAND_TO_SRC_AND_INDEX
+
+
+-- (src, idx) => IO READ: val(0/1)
+ROUTINE READ_IO_BY_INDEX(src: INTEGER; idx: INTEGER; val: INTEGER)
   VAR bitAddr: INTEGER
 BEGIN
   val = 0
   IF (idx < 1) OR (idx > NROWS) THEN
     RETURN
   ENDIF
-  bitAddr = DI_OFFSET[idx]
-  -- IF DIN[bitAddr] = ON THEN
-  IF DOUT[bitAddr] = ON THEN
-  	val = 1
+
+  IF src = SRC_DI THEN
+    bitAddr = DI_OFFSET[idx]
+    IF DIN[bitAddr] = ON THEN
+      val = 1
+    ELSE
+      val = 0
+    ENDIF
   ELSE
-  	val = 0
+    IF src = SRC_DO THEN
+      bitAddr = DO_OFFSET[idx]
+      IF DOUT[bitAddr] = ON THEN
+        val = 1
+      ELSE
+        val = 0
+      ENDIF
+    ENDIF
   ENDIF
-END READ_DI_BY_INDEX
+END READ_IO_BY_INDEX
 
 -- ------------------------------------------------------------------
 -- TOKENIZER (WHILE-style, no CONTINUE)
@@ -341,9 +378,7 @@ END PREC
 -- ------------------------------------------------------------------
 -- INFIX -> POSTFIX (Shunting Yard)
 ROUTINE INFIX_TO_POSTFIX(err_msg: STRING)
-  VAR op_stack_type: ARRAY[MAXTOK] OF INTEGER
-      op_stack_text: ARRAY[MAXTOK] OF STRING[MAX_TOKLEN]
-      op_sp, i, curt, prec_cur, prec_top: INTEGER
+   VAR op_sp, i, curt, prec_cur, prec_top: INTEGER
 BEGIN
   err_msg = ''
   rpn_count = 0
@@ -425,9 +460,9 @@ END INFIX_TO_POSTFIX
 
 
 -- ------------------------------------------------------------------
--- Evaluate RPN (postfix). Uses MAP_OPERAND_TO_INDEX + READ_DI_BY_INDEX
+-- Evaluate RPN (postfix). Uses MAP_OPERAND_TO_SRC_AND_INDEX + READ_IO_BY_INDEX
 ROUTINE EVALUATE_RPN(err_msg: STRING)
-  VAR i, t, idx, val, a, b, err_tmp: INTEGER
+  VAR i, t, a, b, v, src, idx, err_tmp: INTEGER
 BEGIN
   err_msg = ''
   eval_sp = 0
@@ -436,48 +471,62 @@ BEGIN
     t = rpn_type[i]
 
     IF t = T_OPER THEN
-      MAP_OPERAND_TO_INDEX(rpn_text[i], idx, err_tmp)
+      -- DI/DO Table Search by Name
+      MAP_OPERAND_TO_SRC_AND_INDEX(rpn_text[i], src, idx, err_tmp)
       IF err_tmp = 1 THEN
         err_msg = 'ERROR: operand "' + rpn_text[i] + '" not found'; RETURN; ENDIF
-      READ_DI_BY_INDEX(idx, val)
+
+      -- Read DI/DO
+      READ_IO_BY_INDEX(src, idx, v)
+
       eval_sp = eval_sp + 1
-      eval_stack[eval_sp] = val
+      eval_stack[eval_sp] = v
 
     ELSE
       IF t = T_NOT THEN
-        IF eval_sp < 1 THEN err_msg = 'ERROR: NOT lacks operand'; RETURN; ENDIF
+        IF eval_sp < 1 THEN 
+        	err_msg = 'ERROR: NOT lacks operand'; 
+        	RETURN; 
+        ENDIF
         a = eval_stack[eval_sp]
         eval_stack[eval_sp] = 1 - (a AND 1)
 
       ELSE
         IF t = T_AND THEN
-          IF eval_sp < 2 THEN err_msg = 'ERROR: AND lacks operands'; RETURN; ENDIF
+          IF eval_sp < 2 THEN 
+          	err_msg = 'ERROR: AND lacks operands'; 
+          	RETURN; 
+          ENDIF
           b = eval_stack[eval_sp]; eval_sp = eval_sp - 1
           a = eval_stack[eval_sp]
           eval_stack[eval_sp] = (a AND 1) AND (b AND 1)
 
         ELSE
           IF t = T_OR THEN
-            IF eval_sp < 2 THEN err_msg = 'ERROR: OR lacks operands'; RETURN; ENDIF
+            IF eval_sp < 2 THEN 
+            	err_msg = 'ERROR: OR lacks operands'; 
+            	RETURN; 
+            ENDIF
             b = eval_stack[eval_sp]; eval_sp = eval_sp - 1
             a = eval_stack[eval_sp]
             eval_stack[eval_sp] = (a AND 1) OR (b AND 1)
 
           ELSE
-            err_msg = 'ERROR: unknown RPN token type'; RETURN; ENDIF
+            err_msg = 'ERROR: unknown RPN token type'; 
+            RETURN; 
+           ENDIF
           ENDIF
         ENDIF
       ENDIF
-
   ENDFOR
 
   IF eval_sp <> 1 THEN
-    err_msg = 'ERROR: RPN evaluation ended with stack size '; RETURN
-    ENDIF
+    err_msg = 'ERROR: RPN evaluation ended with stack size '; 
+    RETURN
+   ENDIF
 
   result = eval_stack[eval_sp]
 END EVALUATE_RPN
-
 
 -- ------------------------------------------------------------------
 -- High level routine: parse and evaluate
