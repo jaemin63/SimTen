@@ -1,5 +1,5 @@
 PROGRAM IPL_DN_SimTen_If
-%COMMENT = '!!Parsing Prg - condition parser -> R[50]'
+%COMMENT = '!!Parsing Prg - condition parser -> R[10]'
 %NOLOCKGROUP
 %NOPAUSE  = ERROR + COMMAND + TPENABLE
 %NOABORT  = ERROR + COMMAND
@@ -26,9 +26,12 @@ VAR
   data_type : INTEGER
   dummy_int : INTEGER
   dummy_real: REAL
+  dummy_str: STRING[10]
+  arg_wait: INTEGER
   arg_str  : STRING[200]
   status    : INTEGER
   result    : INTEGER
+  err: STRING[100]
 
   -- tokenizer storage
   tok_count : INTEGER
@@ -268,7 +271,6 @@ WHILE_END::
 END TOKENIZE
 
 -- ------------------------------------------------------------------
--- SYNTAX VALIDATION (checks the error cases you requested)
 -- SYNTAX VALIDATION (checks the error cases you requested)
 ROUTINE CHECK_SYNTAX(err_msg: STRING)
   VAR i, bal, t, prev_type, cnt_operands: INTEGER
@@ -585,7 +587,7 @@ BEGIN
   GET_TPE_PRM(1, data_type, dummy_int, dummy_real, arg_str, status)
     IF status <> 0 THEN
     arg_str = '(DOOR AND NOT CALL)OR(NOT PIN)AND DOOR'
-GO TO LB2
+    GO TO LB2
   ENDIF
 
   IF data_type <> 3 THEN
@@ -594,10 +596,27 @@ GO TO LB2
     SET_INT_REG(RNUM, result, status)
     RETURN
   ENDIF
-  
 LB2::
-  WRITE(CR, CR, arg_str)
+  GET_TPE_PRM(2, data_type, arg_wait, dummy_real, dummy_str, status)
+  WRITE(CR, CR, arg_str, arg_wait)
+  -- 최초 1회 파싱 및 평가
   Parse_And_Eval(arg_str, result)
+  WRITE(CR, '1st Result', result, CR)
 
+  -- 조건 만족까지 반복 평가
+  IF (arg_wait = 1) AND (result <> 1) THEN
+  	WRITE('While Result')
+  	WHILE result <> 1 DO
+  		EVALUATE_RPN(err)
+  		WRITE(result,CR)
+  		IF err <> '' THEN
+  			WRITE(err)
+  			result = 0
+  			GOTO LB3
+  		ENDIF
+  		DELAY(200)
+  	ENDWHILE
+  ENDIF
+  LB3::
   SET_INT_REG(RNUM, result, status)
 END IPL_DN_SimTen_If
