@@ -141,6 +141,24 @@ function bindVariable(domId, kvar) {
   });
 }
 
+function bindOffsetVariable(prefix, index) {
+  // Bind OFFSET field to display Karel variable value
+  const offsetEl = document.getElementById(prefix + "_OFFSET_" + index);
+  const kvar = prefix + "_OFFSET[" + index + "]";
+
+  if (!offsetEl) {
+    log("Missing offset element: " + prefix + "_OFFSET_" + index);
+    return;
+  }
+
+  // Read initial value from KAREL and display
+  ihmiGet(kvar, (kprog, kv, type, val) => {
+    const offsetValue = parseInt(val, 10) || 0;
+    offsetEl.value = offsetValue;
+    log("BOUND " + prefix + "_OFFSET_" + index + " <=> " + kvar + " | READ=" + offsetValue);
+  });
+}
+
 function checkDuplicateName(currentId, name) {
   // Check all DI names
   for (let i = 1; i <= 10; i++) {
@@ -189,19 +207,13 @@ function bindAll() {
   // Bind DI START
   bindVariable("DI_START", "DI_START");
 
-  // Bind DI_OFFSET_START with default value
+  // Bind DI_OFFSET_START (Start DI Address)
   ihmiGet("DI_OFFSET_START", (_, kv, t, v) => {
     const val = parseInt(v, 10) || 0;
     const diBase = document.getElementById("DI_BASE");
     if (diBase) {
-      if (val === 0) {
-        // No value, set default to 10000
-        diBase.value = 10000;
-        ihmiSet("DI_OFFSET_START", 10000);
-      } else {
-        diBase.value = val;
-      }
-      // Update all DI offsets
+      diBase.value = val;
+      // Update all DI offsets after setting base
       for (let i = 1; i <= 10; i++) {
         updateOffset("DI", i);
       }
@@ -213,25 +225,19 @@ function bindAll() {
     bindVariable("DI_NAME_" + i, "DI_NAME[" + i + "]");
     bindVariable("DI_ADDR_" + i, "DI_ADDR[" + i + "]");
     bindVariable("DI_BIT_" + i, "DI_BIT[" + i + "]");
-    // OFFSET is calculated, not bound
+    bindOffsetVariable("DI", i);
   }
 
   // Bind DO START
   bindVariable("DO_START", "DO_START");
 
-  // Bind DO_OFFSET_START with default value
+  // Bind DO_OFFSET_START (Start DO Address)
   ihmiGet("DO_OFFSET_START", (_, kv, t, v) => {
     const val = parseInt(v, 10) || 0;
     const doBase = document.getElementById("DO_BASE");
     if (doBase) {
-      if (val === 0) {
-        // No value, set default to 20000
-        doBase.value = 20000;
-        ihmiSet("DO_OFFSET_START", 20000);
-      } else {
-        doBase.value = val;
-      }
-      // Update all DO offsets
+      doBase.value = val;
+      // Update all DO offsets after setting base
       for (let i = 1; i <= 10; i++) {
         updateOffset("DO", i);
       }
@@ -243,7 +249,7 @@ function bindAll() {
     bindVariable("DO_NAME_" + i, "DO_NAME[" + i + "]");
     bindVariable("DO_ADDR_" + i, "DO_ADDR[" + i + "]");
     bindVariable("DO_BIT_" + i, "DO_BIT[" + i + "]");
-    // OFFSET is calculated, not bound
+    bindOffsetVariable("DO", i);
   }
 }
 
@@ -344,7 +350,7 @@ window.onload = () => {
 
   if (diBase) {
     diBase.addEventListener("change", () => {
-      const val = parseInt(diBase.value, 10) || 10000;
+      const val = parseInt(diBase.value, 10);
       ihmiSet("DI_OFFSET_START", val);
       for (let i = 1; i <= 10; i++) {
         updateOffset("DI", i);
@@ -354,7 +360,7 @@ window.onload = () => {
 
   if (doBase) {
     doBase.addEventListener("change", () => {
-      const val = parseInt(doBase.value, 10) || 20000;
+      const val = parseInt(doBase.value, 10);
       ihmiSet("DO_OFFSET_START", val);
       for (let i = 1; i <= 10; i++) {
         updateOffset("DO", i);
