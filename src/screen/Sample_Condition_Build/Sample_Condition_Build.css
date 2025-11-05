@@ -217,6 +217,10 @@ tr:hover {
   font-size: 14px;
 }
 
+#conditionZone {
+  position: relative;
+}
+
 /* Condition Builder in Modal */
 .condition-zone {
   min-height: 60px;
@@ -295,6 +299,9 @@ tr:hover {
 }
 .condition-item.dragging {
   opacity: 0.5;
+  position: absolute;
+  z-index: 1000;
+  pointer-events: none;
 }
 .condition-item.signal-di {
   border-color: #4a90e2;

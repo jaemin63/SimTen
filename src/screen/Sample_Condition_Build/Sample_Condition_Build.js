@@ -73,6 +73,12 @@ function updateConditionZone() {
       div.setAttribute("data-index", index);
       div.textContent = item.text;
 
+      // ✅ 클릭 또는 터치 한 번으로 삭제
+      div.addEventListener("click", function () {
+        conditionItems.splice(index, 1);
+        updateConditionZone();
+      });
+
       div.addEventListener("dragstart", function (e) {
         e.dataTransfer.effectAllowed = "move";
         e.dataTransfer.setData("source-index", String(index));
@@ -413,7 +419,11 @@ function setupDragEvents(element) {
   // 태블릿용 터치 드래그
   element.addEventListener("touchstart", function (e) {
     const touch = e.touches[0];
+    const rect = element.getBoundingClientRect();
     element.classList.add("dragging");
+    element.style.position = "absolute";
+    element.style.left = rect.left + "px";
+    element.style.top = rect.top + "px";
     element.dataset.startX = touch.clientX;
     element.dataset.startY = touch.clientY;
   });
@@ -422,17 +432,24 @@ function setupDragEvents(element) {
     const touch = e.touches[0];
     const deltaX = touch.clientX - parseFloat(element.dataset.startX);
     const deltaY = touch.clientY - parseFloat(element.dataset.startY);
-    element.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+    element.style.left = parseFloat(element.style.left) + deltaX + "px";
+    element.style.top = parseFloat(element.style.top) + deltaY + "px";
+    element.dataset.startX = touch.clientX;
+    element.dataset.startY = touch.clientY;
   });
 
   element.addEventListener("touchend", function (e) {
     element.classList.remove("dragging");
-    element.style.transform = "";
-
+    element.style.position = "";
+    element.style.left = "";
+    element.style.top = "";
+    element.style.zIndex = "";
+    element.style.pointerEvents = "";
+  
     const touch = e.changedTouches[0];
     const dropZone = document.getElementById("conditionZone");
     const rect = dropZone.getBoundingClientRect();
-
+  
     if (
       touch.clientX >= rect.left &&
       touch.clientX <= rect.right &&
@@ -442,7 +459,7 @@ function setupDragEvents(element) {
       const dropIndex = getDropTargetIndex(dropZone, touch.clientX);
       const value = element.getAttribute("data-value");
       const type = element.getAttribute("data-type") || "operator";
-
+  
       const newItem = { text: value, type: type };
       if (dropIndex === -1 || dropIndex >= conditionItems.length) {
         conditionItems.push(newItem);
