@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>DN Solutions | Select CNC Read Signal</title>
+    <meta charset="<!-- #echo var={_CHARSET} -->" />
+    <link rel="stylesheet" type="text/css" href="/frh/ihmi/ihmicomponentstyl.css" />
+    <link rel="stylesheet" type="text/css" href="/frh/ihmi/ihmicomponentfrm.css" />
+    <link rel="stylesheet" type="text/css" href="Sample_Read_Cnc.css" />
+  </head>
+
+  <body>
+    <div class="wrap">
+      <div class="header">
+        <h2>DO Write Control</h2>
+      </div>
+    
+      <div class="panel">
+        <div class="section-title">Select DO Name</div>
+        <select id="doSelect" onchange="updateParameter()">
+          <option value="">-- Select DO --</option>
+        </select>
+      </div>
+    
+      <div class="panel">
+        <div class="section-title">Set DO State</div>
+        <label><input type="radio" name="doState" value="1" onchange="updateParameter()" /> ON</label>
+        <label><input type="radio" name="doState" value="0" onchange="updateParameter()" /> OFF</label>
+      </div>
+    
+      <div class="panel">
+        <div class="section-title">
+          Wait Option
+          <span style="float: right">
+            <span class="checkbox-wrapper">
+              <input type="checkbox" id="chkWait" onchange="updateParameter()" />
+              <label for="chkWait">Wait</label>
+            </span>
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    <script src="Sample_Write_Cnc.js"></script>
+    
+  </body>
+</html>

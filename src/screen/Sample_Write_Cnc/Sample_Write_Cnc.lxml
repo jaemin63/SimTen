@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="SJIS"?>
+<editor>
+  <instruction type="normal" section="cat_plugin">
+    <iconfile>SmplGrp_Open.png</iconfile>
+    <icontext>DO Write</icontext>
+    <program>IPL_DN_SimTen_write.pc</program>
+    <detail>
+      <title>DO Write Control</title>
+      <src>Sample_Write_Cnc.stm</src>
+      <init func="dropDOWriteData" param="'DO01',1,0"></init>
+      <disp>dispDOWriteData</disp>
+    </detail>
+  </instruction>
+</editor>
+
