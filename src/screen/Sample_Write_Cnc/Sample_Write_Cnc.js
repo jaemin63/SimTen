@@ -25,34 +25,33 @@ function loadDONames() {
 
 function updateParameter() {
   var doName = document.getElementById("doSelect").value;
-  var writeVal = document.querySelector('input[name="doState"]:checked')?.value || "0";
-  var waitVal = document.getElementById("chkWait").checked ? "1" : "0";
-  var paramStr = "'" + doName + "'," + writeVal + "," + waitVal;
+  var mode = document.querySelector('input[name="doMode"]:checked').value;
 
-  try {
-    parent.setInstructionParam(paramStr);
-  } catch (e) {
-    console.log("Parameter: " + paramStr);
-  }
+  var writeVal = (mode === "toggle") ? "1" : "0";
+  var modeVal  = (mode === "toggle") ? "1" : "0";
+
+  // doName, writeVal, modeVal
+  var paramStr = "'" + doName + "'," + writeVal + "," + modeVal;
+
+  try { parent.setInstructionParam(paramStr); } catch(e) {}
 }
 
 function dropDOWriteData(argStr) {
   document.getElementById("doSelect").value = "";
-  document.querySelector('input[name="doState"][value="0"]').checked = true;
-  document.getElementById("chkWait").checked = false;
+  document.querySelector('input[name="doMode"][value="hold"]').checked = true;
   updateParameter();
   return true;
 }
 
 function dispDOWriteData(argStr) {
   var params = argStr.split(",");
-  var doName = params[0]?.replace(/'/g, "") || "";
+  var doName = params[0]?.replace(/'/g,"") || "";
   var writeVal = params[1] || "0";
-  var waitVal = params[2] || "0";
 
   document.getElementById("doSelect").value = doName;
-  document.querySelector('input[name="doState"][value="' + writeVal + '"]').checked = true;
-  document.getElementById("chkWait").checked = waitVal === "1";
+
+  var mode = (writeVal === "1") ? "toggle" : "hold";
+  document.querySelector(`input[name="doMode"][value="${mode}"]`).checked = true;
 
   return true;
 }

@@ -1,0 +1,156 @@
+PROGRAM IPL_DN_SIMTEN_WRITE
+%COMMENT = 'DO WRITE + VERIFY (HOLD/TOGGLE)'
+%STACKSIZE = 1000
+
+CONST
+  NROWS = 10
+  RNUM = 10
+
+VAR
+  data_type : INTEGER
+  dummy_int : INTEGER
+  dummy_real: REAL
+  dummy_str : STRING[10]
+  arg_do_name   : STRING[32]
+  write_val : INTEGER
+  arg_mode  : INTEGER   -- 세 번째 인자: 0=HOLD, 1=TOGGLE
+  status    : INTEGER
+  idx       : INTEGER
+  bitAddr   : INTEGER
+  read_val  : INTEGER
+  err       : INTEGER
+
+  DO_NAME IN CMOS FROM IPL_DN_SimTen_Cfg : ARRAY[NROWS] OF STRING[32]
+  DO_OFFSET IN CMOS FROM IPL_DN_SimTen_Cfg : ARRAY[NROWS] OF INTEGER
+
+-- ------------------------------------------------------------------
+ROUTINE STR_TRIM(s: STRING; out: STRING)
+  VAR i, L, start_i, end_i, c : INTEGER
+      tmp: STRING[32]
+BEGIN
+  out = ''
+  L = STR_LEN(s)
+  start_i = 1
+  end_i = L
+
+  WHILE start_i <= L DO
+    c = ORD(s, start_i)
+    IF (c <> 32) AND (c <> 9) AND (c <> 13) AND (c <> 10) THEN
+      GOTO done_start
+    ENDIF
+    start_i = start_i + 1
+  ENDWHILE
+DONE_START::
+
+  WHILE end_i >= start_i DO
+    c = ORD(s, end_i)
+    IF (c <> 32) AND (c <> 9) AND (c <> 13) AND (c <> 10) THEN
+      GOTO done_end
+    ENDIF
+    end_i = end_i - 1
+  ENDWHILE
+DONE_END::
+
+  IF end_i < start_i THEN
+    out = ''
+    RETURN
+  ENDIF
+
+  tmp = ''
+  i = start_i
+  WHILE i <= end_i DO
+    tmp = tmp + CHR(ORD(s, i))
+    i = i + 1
+  ENDWHILE
+
+  out = tmp
+END STR_TRIM
+
+-- ------------------------------------------------------------------
+ROUTINE FIND_DO_INDEX(name: STRING; idx: INTEGER; err: INTEGER)
+  VAR i: INTEGER; a, b: STRING[32]
+BEGIN
+  err = 1
+  idx = 0
+  STR_TRIM(name, a)
+
+  FOR i = 1 TO NROWS DO
+    IF STR_LEN(DO_NAME[i]) > 0 THEN
+      STR_TRIM(DO_NAME[i], b)
+      IF b = a THEN
+        idx = i
+        err = 0
+        RETURN
+      ENDIF
+    ENDIF
+  ENDFOR
+END FIND_DO_INDEX
+
+-- ------------------------------------------------------------------
+-- MAIN
+BEGIN
+  -- 첫 번째 인자: DO 이름
+  GET_TPE_PRM(1, data_type, dummy_int, dummy_real, arg_do_name, status)
+  IF (status <> 0) OR (data_type <> 3) THEN
+    WRITE('ERROR: invalid DO name input')
+    SET_INT_REG(RNUM, 0, status)
+    RETURN
+  ENDIF
+
+  -- 두 번째 인자: WRITE 값 (0 또는 1)
+  GET_TPE_PRM(2, data_type, write_val, dummy_real, dummy_str, status)
+  IF (status <> 0) OR ((write_val <> 0) AND (write_val <> 1)) THEN
+    WRITE('ERROR: invalid write value')
+    SET_INT_REG(RNUM, 0, status)
+    RETURN
+  ENDIF
+
+  -- 세 번째 인자: MODE (0=HOLD, 1=TOGGLE)
+  GET_TPE_PRM(3, data_type, arg_mode, dummy_real, dummy_str, status)
+  IF (status <> 0) OR ((arg_mode <> 0) AND (arg_mode <> 1)) THEN
+    WRITE('ERROR: invalid mode value')
+    SET_INT_REG(RNUM, 0, status)
+    RETURN
+  ENDIF
+
+  -- DO_NAME에서 인덱스 찾기
+  FIND_DO_INDEX(arg_do_name, idx, err)
+  IF err = 1 THEN
+    WRITE('ERROR: DO name not found')
+    SET_INT_REG(RNUM, 0, status)
+    RETURN
+  ENDIF
+
+  bitAddr = DO_OFFSET[idx]
+
+  -- HOLD 모드
+  IF arg_mode = 0 THEN
+    IF write_val = 1 THEN
+      DOUT[bitAddr] = ON
+    ELSE
+      DOUT[bitAddr] = OFF
+    ENDIF
+
+  -- TOGGLE 모드
+  ELSE
+    IF write_val = 1 THEN
+      DOUT[bitAddr] = ON
+      DELAY(500)
+      DOUT[bitAddr] = OFF
+    ELSE
+      DOUT[bitAddr] = OFF
+      DELAY(500)
+      DOUT[bitAddr] = ON
+    ENDIF
+  ENDIF
+
+  -- READ 확인
+  IF DOUT[bitAddr] = ON THEN
+    read_val = 1
+  ELSE
+    read_val = 0
+  ENDIF
+
+  -- 결과 저장
+  SET_INT_REG(RNUM, read_val, status)
+END IPL_DN_SIMTEN_WRITE

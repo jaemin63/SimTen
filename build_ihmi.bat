@@ -223,7 +223,7 @@ rem )
   echo *** compress ipl finished. ***
 
   rem --- copy ipl file to target directory ---
-  set TARGET_DIR=C:\Users\i0215478\Documents\My Workcells\CncguideConnectTest\Robot_1\UD1
+  set TARGET_DIR=C:\Users\i0215409\Documents\My Workcells\HandlingPRO2\Robot_1\UD1
 
   if exist ..\%iplfile%.ipl (
     echo Copying %iplfile%.ipl to %TARGET_DIR%...

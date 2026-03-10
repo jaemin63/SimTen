@@ -29,15 +29,13 @@
     
       <div class="panel">
         <div class="section-title">
-          Wait Option
-          <span style="float: right">
-            <span class="checkbox-wrapper">
-              <input type="checkbox" id="chkWait" onchange="updateParameter()" />
-              <label for="chkWait">Wait</label>
-            </span>
+          Write Mode
+          <span style="float: right;">
+            <label><input type="radio" name="doMode" value="hold" checked onchange="updateParameter()"> Hold</label>
+            <label><input type="radio" name="doMode" value="toggle" onchange="updateParameter()"> Toggle</label>
           </span>
         </div>
-      </div>
+      </div>      
     </div>
     
     <script src="Sample_Write_Cnc.js"></script>
